@@ -93,15 +93,18 @@ def query_es_index(query, strict=False):
 
 def parse_ripgrep_line(line):
     """Parses a line of ripgrep JSON output"""
+    from archivy.data import load_frontmatter
+
     hit = json.loads(line)
     data = {}
     if hit["type"] == "begin":
-        curr_file = (
-            Path(hit["data"]["path"]["text"]).parts[-1].replace(".md", "").split("-")
-        )  # parse target note data from path
-        curr_id = int(curr_file[0])
-        title = curr_file[-1].replace("_", " ")
-        data = {"title": title, "matches": [], "id": curr_id}
+        # Read the real title and id from the matched file's frontmatter so the
+        # displayed title always matches the dataobj. Parsing them out of the
+        # filename truncated titles whose slug contained "-" (filenames look like
+        # "{id}-{secure_filename(title)}.md", and secure_filename keeps hyphens
+        # while turning spaces into underscores).
+        metadata = load_frontmatter(Path(hit["data"]["path"]["text"])).metadata
+        data = {"title": metadata["title"], "matches": [], "id": metadata["id"]}
     elif hit["type"] == "match":
         data = hit["data"]["lines"]["text"].strip()
     else:
