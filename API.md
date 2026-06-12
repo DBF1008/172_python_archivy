@@ -45,5 +45,6 @@ This is an api specification for the routes you might find useful in your script
 | POST `/bookmarks`     | `url`, `desc`, `tags`: array of tags to associate with the bookmark, `path`: string with the relative dir in which the note should be stored. | Stores a new bookmark. Only required parameter is `url`.     |
 | GET `/dataobjs`       |                                                              | Returns an array of all dataobjs with their title, id, contents, url, path etc... This request is resource-heavy so we might need to consider not sending the large contents. |
 | GET `/dataobjs/id`    |                                                              | Returns data for **one** dataobj, specified by his id.       |
+| GET `/dataobjs/id/backlinks` |                                                       | Returns an array of the dataobjs that link to the specified dataobj (its backlinks), each with its `id`, `title` and matching `matches` snippets. Requires search to be enabled (returns 401 otherwise, 404 if the dataobj does not exist). |
 | DELETE `/dataobjs/id` |                                                              | Deletes specified dataobj.                                   |
 

@@ -1,5 +1,7 @@
 from base64 import b64encode
 from os import remove
+from types import SimpleNamespace
+import json
 
 import responses
 from flask import Flask
@@ -256,3 +258,102 @@ def test_adding_invalid_tag_name_fails(test_app, client):
         resp = client.put("/api/tags/add_to_index", json={"tag": tag})
         assert b"Must provide valid tag name" in resp.data
         assert resp.status_code == 401
+
+
+def _fake_rg_output(entries):
+    """Build canned `rg --json` stdout bytes for the given referencing objects.
+
+    `entries` is a list of ``(id, title, [match_lines])`` tuples. Each tuple is
+    rendered as one matched file (a ``begin`` event) followed by one ``match``
+    event per line, mirroring ripgrep's JSON output. This lets the real
+    ``query_ripgrep`` parsing / deduplication logic run without the ``rg``
+    binary being installed.
+    """
+    lines = []
+    for obj_id, title, match_lines in entries:
+        path = f"/tmp/data/{obj_id}-{title}.md"
+        lines.append(json.dumps({"type": "begin", "data": {"path": {"text": path}}}))
+        for text in match_lines:
+            lines.append(
+                json.dumps({"type": "match", "data": {"lines": {"text": text + "\n"}}})
+            )
+        lines.append(json.dumps({"type": "end", "data": {}}))
+    return "\n".join(lines).encode()
+
+
+def _patch_ripgrep(monkeypatch, output):
+    monkeypatch.setattr("archivy.search.which", lambda _: "rg")
+    monkeypatch.setattr("archivy.search.run", lambda *a, **k: SimpleNamespace(stdout=output))
+
+
+def test_get_backlinks_with_no_references(test_app, client, note_fixture, monkeypatch):
+    test_app.config["SEARCH_CONF"]["engine"] = "ripgrep"
+    test_app.config["SEARCH_CONF"]["enabled"] = 1
+    _patch_ripgrep(monkeypatch, b"")  # ripgrep finds nothing
+
+    resp = client.get(f"/api/dataobjs/{note_fixture.id}/backlinks")
+    assert resp.status_code == 200
+    assert resp.json == []
+    test_app.config["SEARCH_CONF"]["enabled"] = 0
+
+
+def test_get_backlinks_from_multiple_sources(test_app, client, note_fixture, monkeypatch):
+    test_app.config["SEARCH_CONF"]["engine"] = "ripgrep"
+    test_app.config["SEARCH_CONF"]["enabled"] = 1
+    target = note_fixture.id
+    output = _fake_rg_output(
+        [
+            (3, "Source A", [f"see [[Source A|{target}]] here"]),
+            (4, "Source B", [f"ref [[Source B|{target}]]"]),
+        ]
+    )
+    _patch_ripgrep(monkeypatch, output)
+
+    resp = client.get(f"/api/dataobjs/{target}/backlinks")
+    assert resp.status_code == 200
+    ids = {item["id"] for item in resp.json}
+    assert ids == {3, 4}  # both referencing objects are returned
+    for item in resp.json:
+        assert item["matches"]  # each backlink carries its snippet
+    test_app.config["SEARCH_CONF"]["enabled"] = 0
+
+
+def test_get_backlinks_deduplicates_per_source(test_app, client, note_fixture, monkeypatch):
+    test_app.config["SEARCH_CONF"]["engine"] = "ripgrep"
+    test_app.config["SEARCH_CONF"]["enabled"] = 1
+    target = note_fixture.id
+    # a single source file references the target twice
+    output = _fake_rg_output(
+        [
+            (
+                3,
+                "Source A",
+                [
+                    f"first [[Source A|{target}]] mention",
+                    f"second [[Source A|{target}]] mention",
+                ],
+            ),
+        ]
+    )
+    _patch_ripgrep(monkeypatch, output)
+
+    resp = client.get(f"/api/dataobjs/{target}/backlinks")
+    assert resp.status_code == 200
+    assert len(resp.json) == 1  # deduplicated to a single backlink entry
+    assert resp.json[0]["id"] == 3
+    assert len(resp.json[0]["matches"]) == 2  # both snippets retained
+    test_app.config["SEARCH_CONF"]["enabled"] = 0
+
+
+def test_get_backlinks_when_search_disabled(test_app, client, note_fixture):
+    test_app.config["SEARCH_CONF"]["enabled"] = 0
+    resp = client.get(f"/api/dataobjs/{note_fixture.id}/backlinks")
+    assert resp.status_code == 401
+    assert b"Search is disabled" in resp.data
+
+
+def test_get_backlinks_for_nonexistent_dataobj(test_app, client):
+    test_app.config["SEARCH_CONF"]["enabled"] = 1
+    resp = client.get("/api/dataobjs/999/backlinks")
+    assert resp.status_code == 404
+    test_app.config["SEARCH_CONF"]["enabled"] = 0

@@ -212,3 +212,27 @@ def search(query, strict=False):
         return query_es_index(query, strict=strict)
     elif current_app.config["SEARCH_CONF"]["engine"] == "ripgrep" or which("rg"):
         return query_ripgrep(query)
+
+
+def get_backlinks(dataobj_id):
+    """
+    Returns the dataobjs that reference (link to) the object of given id,
+    along with the matching snippets.
+
+    Backlinks rely on Archivy's internal wikilink format ``[[Title|id]]``.
+    The query is adapted to the configured search engine so that both the
+    ripgrep and Elasticsearch backends resolve the same literal link and
+    therefore return the same set of results. Each referencing dataobj
+    appears only once, with all of its matching lines grouped together.
+
+    Returns an empty list when search is disabled.
+    """
+    if not current_app.config["SEARCH_CONF"]["enabled"]:
+        return []
+    if current_app.config["SEARCH_CONF"]["engine"] == "elasticsearch":
+        # ES strict mode checks that this literal is a substring of the match.
+        query = f"|{dataobj_id}]]"
+    else:
+        # ripgrep treats the query as a regex, so the pipe must be escaped.
+        query = rf"\|{dataobj_id}]]"
+    return search(query, strict=True)

@@ -4,7 +4,7 @@ from flask_login import login_user
 from tinydb import Query
 
 from archivy import data, tags
-from archivy.search import search
+from archivy.search import search, get_backlinks
 from archivy.models import DataObj, User
 from archivy.helpers import get_db
 
@@ -102,6 +102,24 @@ def get_dataobj(dataobj_id):
         if dataobj
         else Response(status=404)
     )
+
+
+@api_bp.route("/dataobjs/<int:dataobj_id>/backlinks", methods=["GET"])
+def get_dataobj_backlinks(dataobj_id):
+    """
+    Returns the dataobjs that reference the dataobj of given id (its backlinks).
+
+    Each entry contains the referencing object's `id`, `title` and the matching
+    `matches` snippets. Results are deduplicated per referencing object and
+    share the same semantics across the ripgrep and Elasticsearch backends.
+
+    Returns 401 if search is disabled and 404 if the dataobj does not exist.
+    """
+    if not current_app.config["SEARCH_CONF"]["enabled"]:
+        return Response("Search is disabled", status=401)
+    if not data.get_item(dataobj_id):
+        return Response(status=404)
+    return jsonify(get_backlinks(dataobj_id))
 
 
 @api_bp.route("/dataobjs/<int:dataobj_id>", methods=["DELETE"])
