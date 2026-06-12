@@ -134,6 +134,110 @@ def get_items(
         return datacont
 
 
+def _parse_modified_at(value):
+    """Parse a dataobj `modified_at` frontmatter value into a datetime.
+
+    Returns ``None`` when the value is missing or doesn't match the format
+    archivy writes (the same format parsed in the web routes).
+    """
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%x %H:%M")
+    except (ValueError, TypeError):
+        return None
+
+
+def _summarize_dir(directory, name, path):
+    """Recursively turn a `Directory` into a JSON-serializable summary.
+
+    Returns a ``(node, latest_dt, latest_path)`` tuple where ``node`` is the
+    dict describing this directory and ``latest_dt`` / ``latest_path`` track
+    the most recently modified dataobj found anywhere in the subtree (used to
+    bubble up `most_recently_modified_path`).
+    """
+    note_count = 0
+    bookmark_count = 0
+    latest_dt = None
+    latest_str = None
+    latest_path = None
+
+    for dataobj in directory.child_files:
+        obj_type = dataobj.get("type", "")
+        if obj_type == "note":
+            note_count += 1
+        elif obj_type in ("bookmark", "pocket_bookmark"):
+            bookmark_count += 1
+        modified = dataobj.get("modified_at")
+        parsed = _parse_modified_at(modified)
+        if parsed is not None and (latest_dt is None or parsed > latest_dt):
+            latest_dt = parsed
+            latest_str = modified
+            latest_path = path
+
+    total_note_count = note_count
+    total_bookmark_count = bookmark_count
+    children = []
+    # sort by name to give callers a stable, web-consistent ordering
+    for child_name in sorted(directory.child_dirs):
+        child_path = f"{path}/{child_name}" if path else child_name
+        child_node, child_dt, child_path_recent = _summarize_dir(
+            directory.child_dirs[child_name], child_name, child_path
+        )
+        children.append(child_node)
+        total_note_count += child_node["total_note_count"]
+        total_bookmark_count += child_node["total_bookmark_count"]
+        if child_dt is not None and (latest_dt is None or child_dt > latest_dt):
+            latest_dt = child_dt
+            latest_str = child_node["last_modified"]
+            latest_path = child_path_recent
+
+    node = {
+        "name": name,
+        "path": path,
+        "note_count": note_count,
+        "bookmark_count": bookmark_count,
+        "total_note_count": total_note_count,
+        "total_bookmark_count": total_bookmark_count,
+        "last_modified": latest_str,
+        "child_dirs": children,
+    }
+    return node, latest_dt, latest_path
+
+
+def get_tree(path=""):
+    """
+    Builds a structured overview of the directory tree starting at `path`.
+
+    Reuses the same directory tree that powers the web navigation so the
+    output (including empty directories and paths after moves/renames) stays
+    consistent with what archivy displays.
+
+    For every directory the summary contains:
+
+    - **name** / **path**: the directory name and its forward-slash path
+      relative to the data root (`""` for the root).
+    - **note_count** / **bookmark_count**: dataobjs stored directly in the dir.
+    - **total_note_count** / **total_bookmark_count**: recursive counts that
+      also include every nested subdirectory.
+    - **last_modified**: the `modified_at` of the most recently changed dataobj
+      in the subtree, or ``None`` for an empty subtree.
+    - **child_dirs**: the nested directory summaries, sorted by name.
+
+    The top-level node additionally exposes **most_recently_modified_path**:
+    the path of the directory holding the single most recently modified
+    dataobj across the whole tree (``None`` when there are no dataobjs).
+
+    Raises ``FileNotFoundError`` if `path` does not point to an existing dir.
+    """
+    clean_path = path.strip("/")
+    root = get_items(structured=True, path=clean_path)
+    name = clean_path.split("/")[-1] if clean_path else "root"
+    tree, _, latest_path = _summarize_dir(root, name, clean_path)
+    tree["most_recently_modified_path"] = latest_path
+    return tree
+
+
 def create(contents, title, path=""):
     """
     Helper method to save a new dataobj onto the filesystem.

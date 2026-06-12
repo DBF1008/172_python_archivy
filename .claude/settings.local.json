@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//tmp/**)",
+      "Bash(python3 verify_tree.py)"
+    ]
+  }
+}

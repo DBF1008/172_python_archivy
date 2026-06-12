@@ -215,6 +215,29 @@ def delete_folder():
     return Response("Could not delete directory", status=400)
 
 
+@api_bp.route("/folders/tree", methods=["GET"])
+def folder_tree():
+    """
+    Returns a structured overview of the directory tree.
+
+    Each directory node contains its name, path (relative to the data root),
+    the number of notes and bookmarks it holds (both directly and recursively
+    including nested directories), the `last_modified` timestamp of the most
+    recent dataobj in its subtree and its child directories. The top-level
+    node also reports `most_recently_modified_path`, the directory holding the
+    most recently modified dataobj across the whole tree.
+
+    Optional request URL parameter:
+    - **path**: restrict the overview to a subdirectory (defaults to the root).
+    """
+    path = request.args.get("path", "")
+    try:
+        tree = data.get_tree(path)
+    except FileNotFoundError:
+        return Response(status=404)
+    return jsonify(tree)
+
+
 @api_bp.route("/search", methods=["GET"])
 def search_endpoint():
     """

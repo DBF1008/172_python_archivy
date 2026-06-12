@@ -36,6 +36,7 @@ This is an api specification for the routes you might find useful in your script
 | ------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | POST `/folders/new`      | `path`: path of new directory For example, if you want to create the directory `trees` in the existing directory `nature`, `path = "nature/trees"` | Allows you to create new directories                         |
 | DELETE `/folders/delete` | `path`: path of directory to delete. For example, if you want to delete the `trees` dir in `nature`, `path = natures/trees` | Deletes existing directories. Also works if the directories contain data, which will be deleted with it. |
+| GET `/folders/tree`      | `path` (optional): restrict the overview to a subdirectory (defaults to the root) | Returns a structured overview of the directory tree. Each node holds its `name`, `path`, the number of notes and bookmarks it contains directly (`note_count` / `bookmark_count`) and recursively (`total_note_count` / `total_bookmark_count`), the `last_modified` timestamp of the most recent dataobj in its subtree and its `child_dirs`. The root node also exposes `most_recently_modified_path`. |
 
 ### Dataobjs
 
