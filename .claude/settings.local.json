@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import pytest, archivy; print\\(''''pytest+archivy import OK''''\\)\")",
+      "Bash(python3 -c \"import wtforms, flask_wtf; print\\(''''wtforms'''', wtforms.__version__\\); print\\(''''flask_wtf'''', flask_wtf.__version__\\)\")",
+      "Bash(python3 -c \"import werkzeug, flask; print\\(''''werkzeug'''', werkzeug.__version__\\); print\\(''''flask'''', flask.__version__\\)\")",
+      "Bash(python3 -c \"import werkzeug,os;print\\(os.path.dirname\\(werkzeug.__file__\\)\\)\")",
+      "Bash(python3 -m pip install --break-system-packages --quiet \"Werkzeug>=2.3.7,<3\")",
+      "Bash(python3 -c \"import werkzeug; print\\(''''werkzeug'''', werkzeug.__version__\\)\")",
+      "Bash(python3 -c \"import archivy, archivy.data, archivy.api; print\\(''''archivy import OK''''\\)\")",
+      "Bash(python3 -m pytest \"tests/integration/test_api.py\" -k \"rename or frontmatter or update_dataobj or get_dataobj or create_note\" -v -p no:cacheprovider)"
+    ]
+  }
+}

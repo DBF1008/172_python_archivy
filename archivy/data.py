@@ -134,6 +134,22 @@ def get_items(
         return datacont
 
 
+def get_filename(name):
+    """
+    Builds the sanitized markdown filename (`<slug>.md`) used to store a dataobj.
+
+    Dataobjs are stored on disk as `{id}-{slug}.md`, so callers pass `name`
+    already prefixed with the id (eg. `"3-My Note"`). Keeping the slug logic in a
+    single place guarantees that creating a file and later renaming it (when its
+    title changes) always produce the exact same filename.
+    """
+    filename = secure_filename(name)
+    max_filename_length = 255
+    if len(filename + ".md") > max_filename_length:
+        filename = filename[0 : max_filename_length - 3]
+    return f"{filename}.md"
+
+
 def create(contents, title, path=""):
     """
     Helper method to save a new dataobj onto the filesystem.
@@ -144,14 +160,10 @@ def create(contents, title, path=""):
     - **title** - title used for filename
     - **path**
     """
-    filename = secure_filename(title)
     data_dir = get_data_dir()
-    max_filename_length = 255
-    if len(filename + ".md") > max_filename_length:
-        filename = filename[0 : max_filename_length - 3]
     if not is_relative_to(data_dir / path, data_dir):
         path = ""
-    path_to_md_file = data_dir / path / f"{filename}.md"
+    path_to_md_file = data_dir / path / get_filename(title)
     with open(path_to_md_file, "w", encoding="utf-8") as file:
         file.write(contents)
 
@@ -291,6 +303,15 @@ def update_item_frontmatter(dataobj_id, new_frontmatter):
     md = frontmatter.dumps(dataobj)
     with open(filename, "w", encoding="utf-8") as f:
         f.write(md)
+
+    # The on-disk filename embeds a slug derived from the title (`{id}-{slug}.md`).
+    # When the title changes we must rename the file, otherwise the file path,
+    # API responses and the ripgrep-derived titles in search results keep showing
+    # the stale slug and drift further apart on every subsequent rename.
+    new_filename = filename.with_name(get_filename(f"{dataobj_id}-{dataobj['title']}"))
+    if new_filename != filename:
+        filename.rename(new_filename)
+        filename = new_filename
 
     converted_dataobj = DataObj.from_md(md)
     converted_dataobj.fullpath = str(
