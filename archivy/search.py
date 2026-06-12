@@ -96,11 +96,16 @@ def parse_ripgrep_line(line):
     hit = json.loads(line)
     data = {}
     if hit["type"] == "begin":
-        curr_file = (
-            Path(hit["data"]["path"]["text"]).parts[-1].replace(".md", "").split("-")
+        filename = (
+            Path(hit["data"]["path"]["text"]).parts[-1].replace(".md", "")
         )  # parse target note data from path
-        curr_id = int(curr_file[0])
-        title = curr_file[-1].replace("_", " ")
+        # Split only on the first hyphen to separate id from title,
+        # preserving any hyphens that are part of the title itself.
+        id_sep = filename.find("-")
+        curr_id = int(filename[:id_sep]) if id_sep != -1 else int(filename)
+        title = (
+            filename[id_sep + 1:].replace("_", " ") if id_sep != -1 else ""
+        )
         data = {"title": title, "matches": [], "id": curr_id}
     elif hit["type"] == "match":
         data = hit["data"]["lines"]["text"].strip()

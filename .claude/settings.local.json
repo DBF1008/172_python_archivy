@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Bash(export PATH=\"/home/bufan/.local/bin:$PATH\")"
+    ]
+  }
+}
