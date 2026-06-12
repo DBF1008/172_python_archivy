@@ -38,6 +38,76 @@ class Directory:
         self.child_dirs = {}
 
 
+def dir_tree_to_dict(dir_node, base_path=""):
+    """
+    Converts a Directory tree (from build_dir_tree) into a JSON-serializable
+    dict with per-directory statistics.
+
+    Each node contains:
+    - name: directory name
+    - path: relative path from the data root
+    - note_count / bookmark_count: direct children counts
+    - last_modified: most recent modified_at among direct children (or None)
+    - children: list of child directory dicts (sorted alphabetically)
+    - files: list of lightweight file summaries (sorted by modified_at desc)
+
+    **base_path** is the path of the *current* node (not its parent).
+    For the initial call, pass the ``path`` query parameter so the root node
+    gets the correct path in the tree.
+    """
+    node_path = base_path
+
+    note_count = 0
+    bookmark_count = 0
+    last_modified = None
+    files = []
+
+    for f in dir_node.child_files:
+        fm_type = f.get("type", "note")
+        fm_modified = f.get("modified_at")
+
+        if fm_type == "bookmark":
+            bookmark_count += 1
+        else:
+            note_count += 1
+
+        if fm_modified:
+            if last_modified is None or fm_modified > last_modified:
+                last_modified = fm_modified
+
+        file_summary = {
+            "id": f.get("id"),
+            "title": f.get("title"),
+            "type": fm_type,
+            "modified_at": fm_modified,
+        }
+        if fm_type == "bookmark" and f.get("url"):
+            file_summary["url"] = f.get("url")
+        files.append(file_summary)
+
+    # Sort files by modified_at descending (None values last)
+    files.sort(key=lambda x: x.get("modified_at") or "", reverse=True)
+
+    # Recurse into child directories, sorted alphabetically
+    children = [
+        dir_tree_to_dict(
+            child,
+            base_path=(str(Path(node_path) / name) if node_path else name),
+        )
+        for name, child in sorted(dir_node.child_dirs.items())
+    ]
+
+    return {
+        "name": dir_node.name,
+        "path": node_path,
+        "note_count": note_count,
+        "bookmark_count": bookmark_count,
+        "last_modified": last_modified,
+        "children": children,
+        "files": files,
+    }
+
+
 FILE_GLOB = "[0-9]*-*.md"
 
 

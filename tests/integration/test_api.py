@@ -5,7 +5,7 @@ import responses
 from flask import Flask
 from flask.testing import FlaskClient
 from tinydb import Query
-from archivy.data import create_dir, get_items, create_dir, get_item
+from archivy.data import create_dir, get_items, create_dir, get_item, delete_dir, rename_folder
 from archivy.models import DataObj
 from archivy.helpers import get_db
 
@@ -256,3 +256,211 @@ def test_adding_invalid_tag_name_fails(test_app, client):
         resp = client.put("/api/tags/add_to_index", json={"tag": tag})
         assert b"Must provide valid tag name" in resp.data
         assert resp.status_code == 401
+
+
+# --- Directory tree API tests ---
+
+
+def test_get_tree_empty(test_app, client):
+    """Empty data dir returns root node with no children or files."""
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    tree = resp.json
+    assert tree["name"] == "root"
+    assert tree["path"] == ""
+    assert tree["note_count"] == 0
+    assert tree["bookmark_count"] == 0
+    assert tree["last_modified"] is None
+    assert tree["children"] == []
+    assert tree["files"] == []
+
+
+def test_get_tree_root_with_items(test_app, client):
+    """Notes and bookmarks at root have correct counts."""
+    # Create a note
+    note = DataObj(type="note", title="Root Note", tags=["t"], path="")
+    note.insert()
+    # Create a bookmark directly (skip HTTP fetching to avoid mock issues)
+    bm = DataObj(
+        type="bookmark",
+        title="Root BM",
+        content="bookmark content",
+        tags=["t"],
+        path="",
+        url="https://example.com/",
+    )
+    bm.insert()
+
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    tree = resp.json
+    assert tree["path"] == ""
+    assert tree["note_count"] == 1
+    assert tree["bookmark_count"] == 1
+    assert len(tree["files"]) == 2
+    assert tree["last_modified"] is not None
+    # bookmark file should have a url field
+    bm_file = next(f for f in tree["files"] if f["type"] == "bookmark")
+    assert "url" in bm_file
+
+
+def test_get_tree_nested(test_app, client):
+    """Multi-level directories produce proper hierarchy with correct counts."""
+    create_dir("level1/level2")
+    # Note at root
+    DataObj(type="note", title="Root Note", tags=[], path="").insert()
+    # Note in level1
+    DataObj(type="note", title="L1 Note", tags=[], path="level1").insert()
+    # Two notes in level1/level2
+    DataObj(type="note", title="L2 Note A", tags=[], path="level1/level2").insert()
+    DataObj(type="note", title="L2 Note B", tags=[], path="level1/level2").insert()
+
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    tree = resp.json
+
+    # Root level
+    assert tree["note_count"] == 1
+    assert len(tree["children"]) == 1
+
+    # Level 1
+    l1 = tree["children"][0]
+    assert l1["name"] == "level1"
+    assert l1["path"] == "level1"
+    assert l1["note_count"] == 1
+    assert len(l1["children"]) == 1
+
+    # Level 2
+    l2 = l1["children"][0]
+    assert l2["name"] == "level2"
+    assert l2["path"] == "level1/level2"
+    assert l2["note_count"] == 2
+    assert l2["children"] == []
+    assert len(l2["files"]) == 2
+
+
+def test_get_tree_empty_dir(test_app, client):
+    """Empty directory appears in children with zero counts."""
+    create_dir("empty_folder")
+    # Also create a non-empty dir so tree has items
+    create_dir("has_content")
+    DataObj(type="note", title="A Note", tags=[], path="has_content").insert()
+
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    tree = resp.json
+    child_names = [c["name"] for c in tree["children"]]
+    assert "empty_folder" in child_names
+
+    empty = next(c for c in tree["children"] if c["name"] == "empty_folder")
+    assert empty["note_count"] == 0
+    assert empty["bookmark_count"] == 0
+    assert empty["files"] == []
+    assert empty["children"] == []
+    assert empty["last_modified"] is None
+
+
+def test_get_tree_path_param(test_app, client):
+    """?path=subdir returns subtree scoped to that directory."""
+    create_dir("alpha/beta")
+    DataObj(type="note", title="In Alpha", tags=[], path="alpha").insert()
+    DataObj(type="note", title="In Beta", tags=[], path="alpha/beta").insert()
+
+    resp = client.get("/api/dataobjs/tree?path=alpha")
+    assert resp.status_code == 200
+    tree = resp.json
+    assert tree["name"] == "alpha"
+    assert tree["path"] == "alpha"
+    assert tree["note_count"] == 1
+    assert len(tree["children"]) == 1
+    assert tree["children"][0]["name"] == "beta"
+    assert tree["children"][0]["path"] == "alpha/beta"
+
+
+def test_get_tree_invalid_path(test_app, client):
+    """Nonexistent path returns 404."""
+    resp = client.get("/api/dataobjs/tree?path=does_not_exist")
+    assert resp.status_code == 404
+
+
+def test_get_tree_path_injection(test_app, client):
+    """Path traversal attempt returns 404."""
+    resp = client.get("/api/dataobjs/tree?path=../../etc")
+    assert resp.status_code == 404
+
+
+def test_get_tree_after_create_folder(test_app, client):
+    """Newly created folder appears in tree."""
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.json["children"] == []
+
+    create_dir("new_folder")
+
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    child_names = [c["name"] for c in resp.json["children"]]
+    assert "new_folder" in child_names
+
+
+def test_get_tree_after_delete_folder(test_app, client):
+    """Deleted folder disappears from tree."""
+    create_dir("to_delete")
+    resp = client.get("/api/dataobjs/tree")
+    assert any(c["name"] == "to_delete" for c in resp.json["children"])
+
+    delete_dir("to_delete")
+
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    assert not any(c["name"] == "to_delete" for c in resp.json["children"])
+
+
+def test_get_tree_after_rename_folder(test_app, client):
+    """Renamed folder: old name gone, new name present."""
+    create_dir("old_name")
+    DataObj(type="note", title="Inside", tags=[], path="old_name").insert()
+
+    rename_folder("old_name", "new_name")
+
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    child_names = [c["name"] for c in resp.json["children"]]
+    assert "old_name" not in child_names
+    assert "new_name" in child_names
+    # The note should still be inside the renamed folder
+    renamed = next(c for c in resp.json["children"] if c["name"] == "new_name")
+    assert renamed["note_count"] == 1
+
+
+def test_get_tree_after_move_item(test_app, client):
+    """Moved dataobj: removed from source dir, appears in target dir."""
+    create_dir("source")
+    create_dir("target")
+    note = DataObj(type="note", title="Movable", tags=[], path="source")
+    note.insert()
+
+    # Verify initial state
+    resp = client.get("/api/dataobjs/tree")
+    source = next(c for c in resp.json["children"] if c["name"] == "source")
+    target = next(c for c in resp.json["children"] if c["name"] == "target")
+    assert source["note_count"] == 1
+    assert target["note_count"] == 0
+
+    # Move the note
+    from archivy.data import move_item
+    move_item(note.id, "target")
+
+    # Re-query tree
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 200
+    source = next(c for c in resp.json["children"] if c["name"] == "source")
+    target = next(c for c in resp.json["children"] if c["name"] == "target")
+    assert source["note_count"] == 0
+    assert target["note_count"] == 1
+
+
+def test_get_tree_unauthenticated(test_app, client):
+    """Unauthenticated request returns 302."""
+    client.delete("/logout")
+    resp = client.get("/api/dataobjs/tree")
+    assert resp.status_code == 302

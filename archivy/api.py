@@ -159,6 +159,25 @@ def get_dataobjs():
     return jsonify(cur_dir)
 
 
+@api_bp.route("/dataobjs/tree", methods=["GET"])
+def get_dir_tree():
+    """
+    Returns a structured directory tree with per-directory statistics.
+
+    Each node includes the directory name, path, note/bookmark counts,
+    last modification time, child directories, and file summaries.
+
+    Optional query parameter:
+    - **path** - scope the tree to a subdirectory (defaults to root)
+    """
+    path = request.args.get("path", "").lstrip("/")
+    try:
+        tree = data.get_items(path=path, structured=True)
+    except FileNotFoundError:
+        return Response(status=404)
+    return jsonify(data.dir_tree_to_dict(tree, base_path=path))
+
+
 @api_bp.route("/tags/add_to_index", methods=["PUT"])
 def add_tag_to_index():
     """Add a tag to the database."""
