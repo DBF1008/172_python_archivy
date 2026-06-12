@@ -139,6 +139,9 @@ def update_dataobj_frontmatter(dataobj_id):
     Paramter in JSON body:
 
     - **title**: the new title of the dataobj.
+
+    Returns JSON with the updated title and md_path so the client can
+    synchronise its local state after a rename.
     """
 
     new_frontmatter = {
@@ -146,8 +149,12 @@ def update_dataobj_frontmatter(dataobj_id):
     }
 
     try:
-        data.update_item_frontmatter(dataobj_id, new_frontmatter)
-        return Response(status=200)
+        updated = data.update_item_frontmatter(dataobj_id, new_frontmatter)
+        return jsonify(
+            dataobj_id=dataobj_id,
+            title=updated.title,
+            md_path=updated.fullpath,
+        )
     except BaseException:
         return Response(status=404)
 

@@ -271,6 +271,10 @@ def update_item_frontmatter(dataobj_id, new_frontmatter):
     Given an object id, this method overwrites the front matter
     of the post with `new_frontmatter`.
 
+    If the title changes, the file on disk is renamed to match the
+    new slug so that the filename, frontmatter, search index and API
+    responses stay consistent.
+
     ---
     date: Str
     id: Str
@@ -285,10 +289,27 @@ def update_item_frontmatter(dataobj_id, new_frontmatter):
 
     filename = get_by_id(dataobj_id)
     dataobj = frontmatter.load(filename)
+    old_title = dataobj.get("title", "")
     for key in list(new_frontmatter):
         dataobj[key] = new_frontmatter[key]
     dataobj["modified_at"] = datetime.now().strftime("%x %H:%M")
     md = frontmatter.dumps(dataobj)
+
+    # When the title changes, rename the file on disk so the slug in
+    # the filename stays in sync with the frontmatter.  This keeps
+    # ripgrep-based search, local editing paths and API md_path values
+    # consistent.
+    new_title = dataobj.get("title", old_title)
+    old_slug = secure_filename(f"{dataobj_id}-{old_title}")
+    new_slug = secure_filename(f"{dataobj_id}-{new_title}")
+
+    if old_slug != new_slug:
+        new_filename = filename.parent / f"{new_slug}.md"
+        # Only rename if the target is not already occupied by another item.
+        if not new_filename.exists() or new_filename.resolve() == filename.resolve():
+            filename.rename(new_filename)
+            filename = new_filename
+
     with open(filename, "w", encoding="utf-8") as f:
         f.write(md)
 
@@ -298,6 +319,7 @@ def update_item_frontmatter(dataobj_id, new_frontmatter):
     )
     converted_dataobj.index()
     current_app.config["HOOKS"].on_edit(converted_dataobj)
+    return converted_dataobj
 
 
 def get_dirs():

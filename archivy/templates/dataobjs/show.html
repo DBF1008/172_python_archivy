@@ -150,8 +150,15 @@
           }
         };
 
-        response = fetch(`${SCRIPT_ROOT}/dataobjs/frontmatter/{{dataobj['id']}}`, payload);
-        post_title_form.submit.classList.add("post-title-form-sucess");
+        fetch(`${SCRIPT_ROOT}/dataobjs/frontmatter/{{dataobj['id']}}`, payload)
+          .then(function(resp) {
+            if (resp.ok) {
+              post_title_form.submit.classList.add("post-title-form-sucess");
+              // Reload so the page URL and rendered data reflect the
+              // new slug / title.
+              window.location.reload();
+            }
+          });
         e.preventDefault();
       }
 

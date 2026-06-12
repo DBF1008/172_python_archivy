@@ -1,3 +1,53 @@
+import ast
+import sys
+
+# Python 3.14 removed ast.Str/Num/Bytes/NameConstant/Ellipsis.
+# Werkzeug 2.x still references ast.Str when compiling URL rules and
+# accesses the legacy ``.s`` / ``.n`` attributes.  Provide thin wrapper
+# classes that translate those accesses to ``ast.Constant.value``.
+if sys.version_info >= (3, 14):
+
+    class _StrConstant(ast.Constant):
+        """ast.Str shim – exposes ``.s`` as alias for ``.value``."""
+        @property
+        def s(self):
+            return self.value
+
+        @s.setter
+        def s(self, val):
+            self.value = val
+
+    class _NumConstant(ast.Constant):
+        """ast.Num shim – exposes ``.n`` as alias for ``.value``."""
+        @property
+        def n(self):
+            return self.value
+
+        @n.setter
+        def n(self, val):
+            self.value = val
+
+    class _BytesConstant(ast.Constant):
+        """ast.Bytes shim – exposes ``.s`` as alias for ``.value``."""
+        @property
+        def s(self):
+            return self.value
+
+        @s.setter
+        def s(self, val):
+            self.value = val
+
+    if not hasattr(ast, "Str"):
+        ast.Str = _StrConstant
+    if not hasattr(ast, "Num"):
+        ast.Num = _NumConstant
+    if not hasattr(ast, "Bytes"):
+        ast.Bytes = _BytesConstant
+    if not hasattr(ast, "NameConstant"):
+        ast.NameConstant = ast.Constant
+    if not hasattr(ast, "Ellipsis"):
+        ast.Ellipsis = ast.Constant
+
 import shutil
 import tempfile
 from pathlib import Path
