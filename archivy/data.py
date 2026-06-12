@@ -134,6 +134,110 @@ def get_items(
         return datacont
 
 
+def query_dataobjs(
+    path=None,
+    obj_type=None,
+    tags=None,
+    sort_by="id",
+    sort_order="desc",
+    page=1,
+    per_page=20,
+):
+    """
+    Retrieve dataobjs with structured filtering, stable sorting, and pagination.
+
+    Parameters:
+
+    - **path**: filter by directory path (empty string matches root items)
+    - **obj_type**: filter by object type, e.g. ``"bookmark"`` / ``"note"``
+    - **tags**: list of tags — only items containing *all* given tags are returned
+    - **sort_by**: one of ``id``, ``title``, ``date``, ``modified_at``
+    - **sort_order**: ``asc`` or ``desc``
+    - **page**: 1-indexed page number
+    - **per_page**: number of items per page (max 200)
+    """
+    items = get_items(structured=False, json_format=True)
+
+    # --- filtering -----------------------------------------------------------
+    if path is not None:
+        norm_path = path.strip("/")
+        if norm_path == "":
+            # root items have fullpath "." inside metadata (relative to query_dir)
+            items = [
+                item for item in items
+                if item["metadata"].get("fullpath", "") == "."
+            ]
+        else:
+            items = [
+                item
+                for item in items
+                if item["metadata"].get("fullpath", "").strip("/") == norm_path
+            ]
+
+    if obj_type is not None:
+        items = [
+            item for item in items if item["metadata"].get("type") == obj_type
+        ]
+
+    if tags:
+        tag_set = set(tags)
+        items = [
+            item
+            for item in items
+            if tag_set.issubset(set(item["metadata"].get("tags", [])))
+        ]
+
+    # --- sorting (stable — uses id as tiebreaker) ----------------------------
+    if sort_by in ("date", "modified_at"):
+        if sort_by == "modified_at":
+            fmt = "%x %H:%M"
+            default_val = "01/01/1970 00:00"
+        else:
+            fmt = "%x"
+            default_val = "01/01/1970"
+
+        def sort_key(item):
+            try:
+                dt = datetime.strptime(
+                    str(item["metadata"].get(sort_by, default_val)).replace("-", "/"),
+                    fmt,
+                )
+            except (ValueError, TypeError):
+                dt = datetime.min
+            return (dt, item["metadata"].get("id", 0))
+
+    elif sort_by == "title":
+        sort_key = lambda item: (
+            item["metadata"].get("title", "").lower(),
+            item["metadata"].get("id", 0),
+        )
+    else:  # default: id
+        sort_key = lambda item: item["metadata"].get("id", 0)
+
+    items.sort(
+        key=sort_key,
+        reverse=(sort_order == "desc"),
+    )
+
+    # --- pagination -----------------------------------------------------------
+    total = len(items)
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = items[start:end]
+
+    return {
+        "items": page_items,
+        "page_info": {
+            "page": page,
+            "per_page": per_page,
+            "total_items": total,
+            "total_pages": (total + per_page - 1) // per_page if per_page > 0 else 0,
+            "has_next": end < total,
+            "has_prev": page > 1,
+        },
+    }
+
+
 def create(contents, title, path=""):
     """
     Helper method to save a new dataobj onto the filesystem.

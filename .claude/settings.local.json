@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m pytest tests/integration/test_api.py -x -v0)",
+      "Bash(python3:*)"
+    ]
+  }
+}

@@ -154,9 +154,86 @@ def update_dataobj_frontmatter(dataobj_id):
 
 @api_bp.route("/dataobjs", methods=["GET"])
 def get_dataobjs():
-    """Gets all dataobjs"""
-    cur_dir = data.get_items(structured=False, json_format=True)
-    return jsonify(cur_dir)
+    """
+    List dataobjs with optional filtering, sorting, and pagination.
+
+    **Query Parameters:**
+
+    - **path** (str) – filter by directory path (``""`` matches root items)
+    - **type** (str) – filter by object type, e.g. ``bookmark``, ``note``
+    - **tags** (str) – comma-separated tag list; items must match *all* tags
+    - **sort_by** (str) – one of ``id``, ``title``, ``date``, ``modified_at``
+      (default ``id``)
+    - **sort_order** (str) – ``asc`` or ``desc`` (default ``desc``)
+    - **page** (int) – 1-indexed page number (default 1)
+    - **per_page** (int) – items per page, max 200 (default 20)
+
+    When **no query parameters** are provided the endpoint returns a plain JSON
+    array for backward compatibility.  As soon as any parameter is present the
+    response is a structured object with ``items`` and ``page_info`` keys.
+    """
+    any_filter = False
+    try:
+        per_page = int(request.args.get("per_page", 20))
+        if per_page < 1 or per_page > 200:
+            return jsonify({"error": "per_page must be between 1 and 200"}), 400
+        page = int(request.args.get("page", 1))
+        if page < 1:
+            return jsonify({"error": "page must be >= 1"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "page and per_page must be positive integers"}), 400
+
+    sort_by = request.args.get("sort_by", "id")
+    if sort_by not in ("id", "title", "date", "modified_at"):
+        return (
+            jsonify(
+                {
+                    "error": "sort_by must be one of: id, title, date, modified_at"
+                }
+            ),
+            400,
+        )
+
+    sort_order = request.args.get("sort_order", "desc")
+    if sort_order not in ("asc", "desc"):
+        return jsonify({"error": "sort_order must be 'asc' or 'desc'"}), 400
+
+    filter_path = request.args.get("path")
+    if filter_path is not None:
+        any_filter = True
+
+    filter_type = request.args.get("type")
+    if filter_type is not None:
+        any_filter = True
+
+    filter_tags = None
+    raw_tags = request.args.get("tags")
+    if raw_tags is not None:
+        any_filter = True
+        filter_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+
+    # Detect explicit sort / pagination params (non-default values)
+    has_explicit_sort_or_page = (
+        "sort_by" in request.args
+        or "sort_order" in request.args
+        or "page" in request.args
+        or "per_page" in request.args
+    )
+
+    if not any_filter and not has_explicit_sort_or_page:
+        # Backward-compatible: return flat list (identical to old behaviour)
+        return jsonify(data.get_items(structured=False, json_format=True))
+
+    result = data.query_dataobjs(
+        path=filter_path,
+        obj_type=filter_type,
+        tags=filter_tags,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        per_page=per_page,
+    )
+    return jsonify(result)
 
 
 @api_bp.route("/tags/add_to_index", methods=["PUT"])

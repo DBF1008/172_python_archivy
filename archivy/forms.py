@@ -8,7 +8,10 @@ from wtforms import (
     BooleanField,
     FormField,
 )
-from wtforms.fields.html5 import IntegerField
+try:
+    from wtforms.fields.html5 import IntegerField
+except ImportError:
+    from wtforms.fields import IntegerField
 from wtforms.validators import DataRequired, URL
 from archivy.config import Config
 
