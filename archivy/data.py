@@ -2,6 +2,7 @@ import platform
 import subprocess
 import os
 import shutil
+from math import ceil
 from pathlib import Path
 from datetime import datetime
 
@@ -132,6 +133,137 @@ def get_items(
                 else:
                     datacont.append(data)
         return datacont
+
+
+# Fields that `query_dataobjs` knows how to sort by.
+SORTABLE_FIELDS = ("modified_at", "date", "title", "id")
+# Upper bound on the page size a client may request.
+MAX_PER_PAGE = 100
+
+
+def normalize_dir(dirpath):
+    """Normalize a dataobj's directory.
+
+    The root directory is represented as an empty string (``build_dir_tree``
+    /``get_items`` return ``"."`` for it) and any surrounding slashes are
+    stripped so directories can be compared reliably.
+    """
+    if dirpath in (".", "", None):
+        return ""
+    return str(dirpath).strip("/")
+
+
+def _sort_key(metadata, sort_by):
+    """Return a comparable value for ``sort_by`` from a dataobj's metadata.
+
+    Date fields are parsed into ``datetime`` objects so they are ordered
+    chronologically rather than lexicographically. Missing or malformed values
+    fall back to a minimum value so a single bad file never breaks ordering.
+    """
+    if sort_by == "title":
+        return str(metadata.get("title", "")).lower()
+    if sort_by == "id":
+        try:
+            return int(metadata.get("id"))
+        except (TypeError, ValueError):
+            return -1
+    raw = metadata.get(sort_by)
+    if not raw:
+        return datetime.min
+    try:
+        if sort_by == "modified_at":
+            return datetime.strptime(str(raw), "%x %H:%M")
+        # `date` is stored with '-' separators (see DataObj.insert).
+        return datetime.strptime(str(raw).replace("-", "/"), "%x")
+    except (ValueError, TypeError):
+        return datetime.min
+
+
+def query_dataobjs(
+    types=None,
+    tags=None,
+    path="",
+    sort_by="modified_at",
+    order="desc",
+    page=1,
+    per_page=None,
+):
+    """
+    Returns a filtered, sorted and paginated page of dataobjs together with
+    pagination metadata.
+
+    Parameters:
+
+    - **types**: list of types to keep (eg. ``["note", "bookmark"]``). An
+      object matches if its type is any of them. Empty/``None`` means no type
+      filter.
+    - **tags**: list of tags. An object matches only if it contains *all* of
+      the given tags (logical AND). Empty/``None`` means no tag filter.
+    - **path**: directory to restrict results to. The object's directory is
+      resolved from its real location on disk, so objects in subdirectories are
+      included and results stay correct after items are moved. Empty means no
+      directory filter.
+    - **sort_by**: one of :data:`SORTABLE_FIELDS`.
+    - **order**: ``"asc"`` or ``"desc"``.
+    - **page**: 1-indexed page number.
+    - **per_page**: page size. If ``None``, every matching object is returned on
+      a single page.
+
+    Returns a dict with:
+
+    - **data**: list of dataobjs for the requested page (same per-object shape
+      as :func:`get_items` with ``json_format=True``).
+    - **pagination**: dict with ``page``, ``per_page``, ``total_items``,
+      ``total_pages``, ``has_next``, ``has_prev``, ``sort`` and ``order``.
+    """
+    types = types or []
+    tags = tags or []
+    path = normalize_dir(path)
+    reverse = order == "desc"
+
+    items = get_items(structured=False, json_format=True)
+
+    filtered = []
+    for item in items:
+        metadata = item["metadata"]
+        item_dir = normalize_dir(metadata.get("fullpath"))
+        # recursive directory match: the object is in `path` or a subdir of it
+        if path and item_dir != path and not item_dir.startswith(path + "/"):
+            continue
+        if types and metadata.get("type") not in types:
+            continue
+        if tags:
+            item_tags = metadata.get("tags") or []
+            if not all(tag in item_tags for tag in tags):
+                continue
+        filtered.append(item)
+
+    # Stable, deterministic ordering: first sort by ascending id, then by the
+    # requested key. Python's sort is stable, so objects that compare equal on
+    # the requested key keep their id-ascending order in both asc and desc.
+    filtered.sort(key=lambda it: _sort_key(it["metadata"], "id"))
+    filtered.sort(key=lambda it: _sort_key(it["metadata"], sort_by), reverse=reverse)
+
+    total_items = len(filtered)
+    effective_per_page = per_page if per_page else (total_items or 1)
+    total_pages = ceil(total_items / effective_per_page) if total_items else 0
+    page = max(page, 1)
+    start = (page - 1) * effective_per_page
+    page_items = filtered[start : start + effective_per_page]
+
+    return {
+        "data": page_items,
+        "pagination": {
+            "page": page,
+            "per_page": effective_per_page,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1 and total_items > 0,
+            "sort": sort_by,
+            "order": order,
+        },
+    }
 
 
 def create(contents, title, path=""):

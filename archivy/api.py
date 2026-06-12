@@ -154,9 +154,87 @@ def update_dataobj_frontmatter(dataobj_id):
 
 @api_bp.route("/dataobjs", methods=["GET"])
 def get_dataobjs():
-    """Gets all dataobjs"""
-    cur_dir = data.get_items(structured=False, json_format=True)
-    return jsonify(cur_dir)
+    """
+    Returns a filtered, sorted and paginated list of dataobjs.
+
+    All parameters are optional URL query parameters. With no parameters, every
+    dataobj is returned on a single page, sorted by `modified_at` descending.
+
+    **Filtering**
+
+    - **path**: only return dataobjs located in this directory or any of its
+      subdirectories. The directory is resolved from each object's real
+      location on disk, so results stay correct after objects are moved.
+    - **type**: filter by type (eg. `note`, `bookmark`). May be repeated
+      (`?type=note&type=bookmark`); an object matches if its type is any of
+      the given ones.
+    - **tags**: filter by tag. May be repeated (`?tags=a&tags=b`); an object
+      matches only if it contains *all* of the requested tags.
+
+    **Sorting**
+
+    - **sort**: field to sort by, one of `modified_at` (default), `date`,
+      `title`, `id`.
+    - **order**: `desc` (default) or `asc`. Ties are always broken by ascending
+      id, so ordering is stable across calls.
+
+    **Pagination**
+
+    - **page**: 1-indexed page number (default `1`).
+    - **per_page**: number of items per page (1-100). If omitted, every matching
+      item is returned on a single page.
+
+    The response is a JSON object with two keys:
+
+    - **data**: list of dataobjs for the requested page.
+    - **pagination**: metadata with `page`, `per_page`, `total_items`,
+      `total_pages`, `has_next`, `has_prev`, `sort` and `order`.
+
+    Returns `400` if any parameter is invalid.
+    """
+    types = request.args.getlist("type")
+    tags = request.args.getlist("tags")
+    path = request.args.get("path", "")
+
+    sort_by = request.args.get("sort", "modified_at")
+    if sort_by not in data.SORTABLE_FIELDS:
+        return Response(
+            f"Invalid sort field. Must be one of: {', '.join(data.SORTABLE_FIELDS)}.",
+            status=400,
+        )
+
+    order = request.args.get("order", "desc").lower()
+    if order not in ("asc", "desc"):
+        return Response("Invalid order. Must be 'asc' or 'desc'.", status=400)
+
+    try:
+        page = int(request.args.get("page", 1))
+    except ValueError:
+        return Response("page must be an integer.", status=400)
+    if page < 1:
+        return Response("page must be >= 1.", status=400)
+
+    per_page = request.args.get("per_page")
+    if per_page is not None:
+        try:
+            per_page = int(per_page)
+        except ValueError:
+            return Response("per_page must be an integer.", status=400)
+        if per_page < 1 or per_page > data.MAX_PER_PAGE:
+            return Response(
+                f"per_page must be between 1 and {data.MAX_PER_PAGE}.", status=400
+            )
+
+    result = data.query_dataobjs(
+        types=types,
+        tags=tags,
+        path=path,
+        sort_by=sort_by,
+        order=order,
+        page=page,
+        per_page=per_page,
+    )
+    return jsonify(result)
 
 
 @api_bp.route("/tags/add_to_index", methods=["PUT"])
