@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/integration/test_path_consistency.py -v)",
+      "Read(//home/bufan/.local/bin/**)",
+      "Read(//home/bufan/.local/**)"
+    ]
+  }
+}

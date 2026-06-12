@@ -63,6 +63,27 @@ def load_frontmatter(filepath, load_content=False):
     return data
 
 
+def _update_path_in_frontmatter(filepath, new_path):
+    """Updates the 'path' field in a dataobj's YAML front matter without losing content."""
+    post = frontmatter.load(str(filepath))
+    post["path"] = new_path
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(frontmatter.dumps(post))
+
+
+def _reindex_file(filepath):
+    """Re-indexes a single dataobj file into the search engine. Fails silently if ES is unavailable."""
+    from archivy.models import DataObj
+
+    try:
+        md_content = filepath.read_text(encoding="utf-8")
+        dataobj = DataObj.from_md(md_content)
+        dataobj.fullpath = str(filepath.relative_to(current_app.config["USER_DIR"]))
+        dataobj.index()
+    except Exception:
+        current_app.logger.debug(f"Could not re-index {filepath}")
+
+
 def build_dir_tree(path, query_dir, load_content=False):
     """
     Builds a structured tree of directories and data objects.
@@ -182,7 +203,15 @@ def move_item(dataobj_id, new_path):
     if (out_dir / file.parts[-1]).exists():
         raise FileExistsError
     elif is_relative_to(out_dir, data_dir) and out_dir.exists():  # check file isn't
-        return shutil.move(str(file), f"{get_data_dir()}/{new_path}/")
+        dest = shutil.move(str(file), f"{get_data_dir()}/{new_path}/")
+        dest_path = Path(dest)
+        # Update path in front matter to reflect new location
+        new_rel_path = str(dest_path.parent.relative_to(data_dir))
+        if new_rel_path == ".":
+            new_rel_path = ""
+        _update_path_in_frontmatter(dest_path, new_rel_path)
+        _reindex_file(dest_path)
+        return dest
     return False
 
 
@@ -202,8 +231,31 @@ def rename_folder(old_path, new_name):
         raise FileNotFoundError
     if suggested_renaming.exists():
         raise FileExistsError
+
+    old_path_str = str(curr_dir.relative_to(data_dir))
     curr_dir.rename(suggested_renaming)
-    return str(suggested_renaming.relative_to(data_dir))
+    new_path_str = str(suggested_renaming.relative_to(data_dir))
+
+    # Update path in front matter of all contained dataobjs and re-index
+    old_prefix = old_path_str + "/"
+    for filepath in suggested_renaming.rglob("*.md"):
+        try:
+            post = frontmatter.load(str(filepath))
+            current_fm_path = post.get("path", "")
+            if current_fm_path == old_path_str:
+                new_fm_path = new_path_str
+            elif current_fm_path.startswith(old_prefix):
+                new_fm_path = new_path_str + "/" + current_fm_path[len(old_prefix):]
+            else:
+                continue
+            post["path"] = new_fm_path
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(frontmatter.dumps(post))
+            _reindex_file(filepath)
+        except Exception:
+            current_app.logger.warning(f"Could not update path for {filepath}")
+
+    return new_path_str
 
 
 def delete_item(dataobj_id):
@@ -329,6 +381,14 @@ def delete_dir(name):
     if not is_relative_to(target_dir, root_dir) or target_dir == root_dir:
         return False
     try:
+        # Remove contained dataobjs from search index before deleting directory
+        if target_dir.exists():
+            for filepath in target_dir.rglob("*.md"):
+                try:
+                    dataobj_id = int(filepath.stem.split("-")[0])
+                    remove_from_index(dataobj_id)
+                except (ValueError, IndexError):
+                    pass
         shutil.rmtree(target_dir)
         return True
     except FileNotFoundError:
