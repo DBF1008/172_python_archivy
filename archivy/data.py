@@ -172,6 +172,34 @@ def get_item(dataobj_id):
     return None
 
 
+def sync_frontmatter_path(file):
+    """
+    Syncs a dataobj's ``path`` frontmatter with its actual location on disk and
+    refreshes its search index entry.
+
+    This must be called after a dataobj is moved or its parent directory is
+    renamed, otherwise the ``path`` stored in the file's frontmatter (and thus
+    returned by the API and stored in the search index) keeps pointing at the
+    old, stale location.
+    """
+
+    from archivy.models import DataObj
+
+    file = Path(file)
+    data_dir = get_data_dir()
+    dataobj = frontmatter.load(str(file))
+    new_dir = str(file.parent.relative_to(data_dir))
+    # root-level items use an empty path rather than "."
+    dataobj["path"] = "" if new_dir == "." else new_dir
+    md = frontmatter.dumps(dataobj)
+    with open(file, "w", encoding="utf-8") as f:
+        f.write(md)
+
+    reindexed = DataObj.from_md(md)
+    reindexed.fullpath = str(file.relative_to(current_app.config["USER_DIR"]))
+    reindexed.index()
+
+
 def move_item(dataobj_id, new_path):
     """Move dataobj of given id to new_path"""
     file = get_by_id(dataobj_id)
@@ -182,7 +210,10 @@ def move_item(dataobj_id, new_path):
     if (out_dir / file.parts[-1]).exists():
         raise FileExistsError
     elif is_relative_to(out_dir, data_dir) and out_dir.exists():  # check file isn't
-        return shutil.move(str(file), f"{get_data_dir()}/{new_path}/")
+        moved_path = shutil.move(str(file), f"{get_data_dir()}/{new_path}/")
+        # keep the moved file's path metadata and search index in sync
+        sync_frontmatter_path(moved_path)
+        return moved_path
     return False
 
 
@@ -203,6 +234,10 @@ def rename_folder(old_path, new_name):
     if suggested_renaming.exists():
         raise FileExistsError
     curr_dir.rename(suggested_renaming)
+    # the directory changed, so every dataobj it contains now lives at a new
+    # path: sync their frontmatter and search index to the new location.
+    for filepath in suggested_renaming.rglob(FILE_GLOB):
+        sync_frontmatter_path(filepath)
     return str(suggested_renaming.relative_to(data_dir))
 
 
@@ -329,6 +364,13 @@ def delete_dir(name):
     if not is_relative_to(target_dir, root_dir) or target_dir == root_dir:
         return False
     try:
+        # remove every contained dataobj from the search index before deleting
+        # it from disk, otherwise the entries linger as ghost records that the
+        # API search and downstream sync scripts still pick up.
+        for filepath in target_dir.rglob(FILE_GLOB):
+            metadata = load_frontmatter(filepath).metadata
+            if "id" in metadata:
+                remove_from_index(metadata["id"])
         shutil.rmtree(target_dir)
         return True
     except FileNotFoundError:

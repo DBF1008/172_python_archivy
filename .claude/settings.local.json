@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(SUITES=\"tests/integration/test_api.py tests/unit/test_models.py tests/functional/test_routes.py\" echo \"=== FIXED run ===\" .venv/bin/python -m pytest $SUITES -p no:cacheprovider -q --tb=no)",
+      "Bash(1 echo:*)"
+    ]
+  }
+}
