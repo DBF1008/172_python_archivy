@@ -212,3 +212,51 @@ def search(query, strict=False):
         return query_es_index(query, strict=strict)
     elif current_app.config["SEARCH_CONF"]["engine"] == "ripgrep" or which("rg"):
         return query_ripgrep(query)
+
+
+def get_backlinks(dataobj_id):
+    """
+    Returns a list of dataobjs that link to the given dataobj id (backlinks).
+
+    Each entry is a dict with keys: id, title, and optionally matches (list of
+    matching text snippets).
+
+    Works with both ripgrep and Elasticsearch backends.  The wiki-link syntax
+    ``[[Title|ID]]`` is assumed; the search looks for the trailing fragment so
+    that only notes genuinely referencing *dataobj_id* are returned.
+
+    Returns an empty list when search is disabled.
+    Results are deduplicated by dataobj id so that a note linking to the same
+    target more than once appears only once.
+    """
+    if not current_app.config["SEARCH_CONF"]["enabled"]:
+        return []
+
+    engine = current_app.config["SEARCH_CONF"]["engine"]
+
+    # Wiki-link syntax: [[Title|ID]]
+    # ripgrep treats "|" as a literal character in a fixed-string search, so we
+    # search for "|ID]]".
+    # Elasticsearch's rebuilt_standard analyzer tokenizes "|" as a separator,
+    # producing a ")" token between the pipe and the digits, so we search for
+    # "|ID)]]".
+    if engine == "ripgrep":
+        query = f"\\|{dataobj_id}]]"
+    else:
+        query = f"|{dataobj_id})]]"
+
+    results = search(query, strict=True)
+
+    # Deduplicate by id — keep the first occurrence, merge matches if the same
+    # dataobj appears more than once (defensive; search backends normally return
+    # one entry per document).
+    seen_ids = set()
+    deduplicated = []
+    for entry in results:
+        entry_id = str(entry["id"])
+        if entry_id in seen_ids:
+            continue
+        seen_ids.add(entry_id)
+        deduplicated.append(entry)
+
+    return deduplicated

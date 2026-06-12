@@ -22,7 +22,7 @@ from archivy.models import DataObj, User
 from archivy import data, app, forms, csrf
 from archivy.helpers import get_db, write_config, is_safe_redirect_url
 from archivy.tags import get_all_tags
-from archivy.search import search, search_frontmatter_tags
+from archivy.search import search, search_frontmatter_tags, get_backlinks
 from archivy.config import Config
 
 import re
@@ -192,13 +192,7 @@ def show_dataobj(dataobj_id):
     if request.args.get("raw") == "1":
         return frontmatter.dumps(dataobj)
 
-    backlinks = []
-    if app.config["SEARCH_CONF"]["enabled"]:
-        if app.config["SEARCH_CONF"]["engine"] == "ripgrep":
-            query = f"\|{dataobj_id}]]"
-        else:
-            query = f"|{dataobj_id})]]"
-        backlinks = search(query, strict=True)
+    backlinks = get_backlinks(dataobj_id)
 
     # Form for moving data into another folder
     move_form = forms.MoveItemForm()

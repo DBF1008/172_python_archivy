@@ -4,7 +4,7 @@ from flask_login import login_user
 from tinydb import Query
 
 from archivy import data, tags
-from archivy.search import search
+from archivy.search import search, get_backlinks
 from archivy.models import DataObj, User
 from archivy.helpers import get_db
 
@@ -228,6 +228,24 @@ def search_endpoint():
     query = request.args.get("query")
     search_results = search(query)
     return jsonify(search_results)
+
+
+@api_bp.route("/dataobjs/<int:dataobj_id>/backlinks", methods=["GET"])
+def get_dataobj_backlinks(dataobj_id):
+    """
+    Returns the list of dataobjs that link to the given dataobj (backlinks).
+
+    Each entry contains ``id``, ``title``, and optionally ``matches`` (a list of
+    matching text snippets showing the context where the link was found).
+
+    When search is disabled the response body is an empty JSON array.
+    Results are deduplicated by dataobj id.
+    """
+    if not data.get_item(dataobj_id):
+        return Response(status=404)
+
+    backlinks = get_backlinks(dataobj_id)
+    return jsonify(backlinks)
 
 
 @api_bp.route("/images", methods=["POST"])

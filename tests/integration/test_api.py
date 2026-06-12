@@ -256,3 +256,123 @@ def test_adding_invalid_tag_name_fails(test_app, client):
         resp = client.put("/api/tags/add_to_index", json={"tag": tag})
         assert b"Must provide valid tag name" in resp.data
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Backlinks API tests
+# ---------------------------------------------------------------------------
+
+
+def _enable_ripgrep_search(test_app):
+    test_app.config["SEARCH_CONF"]["enabled"] = 1
+    test_app.config["SEARCH_CONF"]["engine"] = "ripgrep"
+
+
+def _disable_search(test_app):
+    test_app.config["SEARCH_CONF"]["enabled"] = 0
+
+
+def test_backlinks_returns_empty_when_no_references(
+    test_app, client: FlaskClient, note_fixture
+):
+    """A dataobj that nothing links to should yield an empty backlinks list."""
+    _enable_ripgrep_search(test_app)
+    try:
+        resp = client.get(f"/api/dataobjs/{note_fixture.id}/backlinks")
+        assert resp.status_code == 200
+        assert resp.json == []
+    finally:
+        _disable_search(test_app)
+
+
+def test_backlinks_returns_multiple_references(
+    test_app, client: FlaskClient, note_fixture
+):
+    """Multiple distinct notes linking to the same target must all appear."""
+    _enable_ripgrep_search(test_app)
+    try:
+        # Create two notes that each link to note_fixture
+        note_a = DataObj(
+            type="note",
+            title="Note A",
+            content=f"See [[{note_fixture.title}|{note_fixture.id}]]",
+            tags=[],
+            path="",
+        )
+        note_a.insert()
+
+        note_b = DataObj(
+            type="note",
+            title="Note B",
+            content=f"Also see [[{note_fixture.title}|{note_fixture.id}]]",
+            tags=[],
+            path="",
+        )
+        note_b.insert()
+
+        resp = client.get(f"/api/dataobjs/{note_fixture.id}/backlinks")
+        assert resp.status_code == 200
+
+        backlink_ids = {entry["id"] for entry in resp.json}
+        assert note_a.id in backlink_ids
+        assert note_b.id in backlink_ids
+        assert len(resp.json) == 2
+
+        # Each backlink entry should include matching snippets
+        for entry in resp.json:
+            assert "matches" in entry
+            assert len(entry["matches"]) > 0
+    finally:
+        _disable_search(test_app)
+
+
+def test_backlinks_deduplicates_same_source(
+    test_app, client: FlaskClient, note_fixture
+):
+    """A note that links to the target multiple times must appear only once."""
+    _enable_ripgrep_search(test_app)
+    try:
+        # Single note that links to note_fixture twice
+        note_dup = DataObj(
+            type="note",
+            title="Double Linker",
+            content=(
+                f"First link [[{note_fixture.title}|{note_fixture.id}]] and "
+                f"second link [[{note_fixture.title}|{note_fixture.id}]]"
+            ),
+            tags=[],
+            path="",
+        )
+        note_dup.insert()
+
+        resp = client.get(f"/api/dataobjs/{note_fixture.id}/backlinks")
+        assert resp.status_code == 200
+
+        # Should appear exactly once
+        assert len(resp.json) == 1
+        assert resp.json[0]["id"] == note_dup.id
+    finally:
+        _disable_search(test_app)
+
+
+def test_backlinks_returns_empty_when_search_disabled(
+    test_app, client: FlaskClient, note_fixture
+):
+    """When search is disabled the response should be an empty list (200)."""
+    _disable_search(test_app)
+
+    resp = client.get(f"/api/dataobjs/{note_fixture.id}/backlinks")
+    assert resp.status_code == 200
+    assert resp.json == []
+
+
+def test_backlinks_returns_404_for_missing_dataobj(
+    test_app, client: FlaskClient
+):
+    """Requesting backlinks for a non-existent dataobj should return 404."""
+    _enable_ripgrep_search(test_app)
+    try:
+        resp = client.get("/api/dataobjs/999/backlinks")
+        assert resp.status_code == 404
+    finally:
+        _disable_search(test_app)

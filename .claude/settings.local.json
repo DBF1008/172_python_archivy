@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(cargo install:*)",
+      "Bash(export PATH=\"$HOME/.local/bin:$PATH\")"
+    ]
+  }
+}
